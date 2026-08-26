@@ -1,9 +1,27 @@
-opencv-python>=4.8.0
-mediapipe>=0.10.0
-numpy>=1.24.0
-scipy>=1.10.0
-fastapi>=0.100.0
-pydantic>=2.0
-uvicorn>=0.22.0
-python-dotenv>=1.0.0
+# AI-Based Fake Identity & Document Screening System — SIH26188
+# All teammates: add your dependencies below your section header.
 
+# --- Shared ---
+opencv-python>=4.8.0
+numpy>=1.24.0
+Pillow>=10.0.0
+streamlit>=1.28.0
+
+# --- Person 1: Preprocessing ---
+# (add here)
+
+# --- Person 2: OCR ---
+# (add here)
+
+# --- Person 3: ELA ---
+# (add here)
+
+# --- Person 4: Forensics ---
+# (add here)
+
+# --- Person 5: QR Crypto ---
+pyzbar>=0.1.9
+cryptography>=41.0.0
+
+# --- Person 6: UI ---
+# (add here)

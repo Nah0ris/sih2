@@ -1,142 +1,57 @@
-# KIRTI — Camera-Based Fitness Assessment Prototype
+# AI-Based Fake Identity & Document Screening System
 
-**SIH PS25073 · SAI · Fitness & Sports**
+**SIH26188 — Ministry of Home Affairs**
 
-Proof-of-concept for replacing manual fitness scoring at SAI KIRTI talent scouting
-centres with computer vision. Athletes perform tests in front of a webcam; the
-system counts reps / measures performance automatically via pose estimation.
-
-## Supported Tests
-
-| Test | Method |
-|------|--------|
-| **Sit-ups** | Tracks shoulder–hip–knee angle, counts reps via peak detection |
-| **Vertical Jump** | Tracks hip Y-coordinate, measures flight time → `h = g·t²/8` |
+Upload a photo of an Aadhaar card and get an instant verdict: **GENUINE**, **SUSPICIOUS**, or **TAMPERED** — backed by cryptographic QR verification and visual forensics.
 
 ## Quick Start
 
 ```bash
-# 1. Install dependencies
+# 1. Clone and enter the project
+git clone <repo-url>
+cd aadhaar-verifier
+
+# 2. Create a virtual environment (recommended)
+python -m venv .venv
+.venv\Scripts\activate        # Windows
+# source .venv/bin/activate   # Linux/Mac
+
+# 3. Install dependencies
 pip install -r requirements.txt
 
-# 2. Start the server (seeds DB with 5 demo athletes on first run)
-python run.py
+# 4. Run the app
+streamlit run main.py
 ```
 
-Server runs at **http://localhost:8000**.  
-API docs at **http://localhost:8000/docs** (Swagger UI).
-
-## API Endpoints
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| `POST` | `/api/templates` | Create a locked test template |
-| `GET`  | `/api/templates` | List all templates |
-| `GET`  | `/api/templates/{id}` | Get template by ID |
-| `GET`  | `/api/athletes` | List all athletes |
-| `GET`  | `/api/athletes/{id}` | Get athlete by ID |
-| `POST` | `/api/session/start` | Start CV session (`situp` or `vertical_jump`) |
-| `GET`  | `/api/session/frame` | Get latest annotated frame as base64 JPEG |
-| `GET`  | `/api/session/status` | Poll rep count / jump state |
-| `POST` | `/api/session/reset` | Reset engine for re-attempt |
-| `POST` | `/api/session/stop` | Stop webcam + CV session |
-| `POST` | `/api/submissions` | Record immutable result |
-| `GET`  | `/api/submissions/{test_id}` | List submissions for a test |
-
-## Seeded Athletes
-
-| Name | Sport |
-|------|-------|
-| LeBron James | Basketball |
-| Lionel Messi | Football |
-| Sidharth Sivasankar | Athletics |
-| Cristiano Ronaldo | Football |
-| Lewis Hamilton | Motorsport |
-
-## Architecture
+## Project Structure
 
 ```
-Frontend (browser) ──REST──▶ FastAPI (api/) ──▶ CV Engine (engine/)
-                                  │                   │
-                                  ▼                   ▼
-                             SQLite (db/)      MediaPipe + OpenCV
-                                                  (webcam)
+modules/
+  preprocessing.py    — Person 1: perspective correction, CLAHE, blur gate
+  ocr.py              — Person 2: field extraction from card text
+  ela.py              — Person 3: Error Level Analysis heatmap + score
+  forensics.py        — Person 4: copy-move detection + layout/font check
+  qr_crypto.py        — Person 5: QR decode, signature verify, field extraction
+  verdict.py          — Person 5: combine all outputs into final verdict
+
+ui/
+  app.py              — Person 6: Streamlit UI components
+
+config.py             — Shared constants and thresholds
+main.py               — Entry point / pipeline integration
 ```
 
-The frontend never touches MediaPipe or the webcam directly — it polls
-`/api/session/status` for numbers and renders them.
+## How It Works
 
-## Threshold Tuning
+1. **Preprocess** — correct perspective, enhance contrast, reject blurry images
+2. **OCR** — extract name, DOB, gender, address from the card text
+3. **QR Crypto** — decode the Secure QR, verify UIDAI digital signature, extract fields
+4. **Cross-check** — compare QR fields vs OCR fields (strict match, no fuzzy)
+5. **ELA + Forensics** — error-level analysis, copy-move detection, layout check
+6. **Verdict** — combine everything into GENUINE / SUSPICIOUS / TAMPERED + trust score
 
-The vertical jump engine has tunable parameters passed to `VerticalJump()`:
+## Requirements
 
-| Parameter | Default | Purpose |
-|-----------|---------|--------|
-| `takeoff_threshold` | 0.05 | How far below baseline (normalised coords) hip must drop to trigger takeoff. Increase if getting false takeoffs. |
-| `landing_tolerance` | 0.02 | How close to baseline hip must return to count as landing. Increase for more lenient landing detection. |
-| `calibration_frames` | 20 | Frames for baseline calibration. Increase for more stable baseline at cost of longer setup. |
-
-## Troubleshooting
-
-| Issue | Fix |
-|-------|-----|
-| "Cannot open webcam" | Ensure no other app is using the camera. Try changing camera index in `_Session.start()`. |
-| Model download fails | Delete `engine/pose_landmarker_lite.task` and restart — it will re-download. Check internet connectivity. |
-| False takeoff triggers | Increase `takeoff_threshold` (e.g. 0.08). Ensure athlete stands still during calibration. |
-| Jump height seems wrong | Check FPS is accurate (measured from webcam, not guessed). Bad FPS = wrong flight time = wrong height. |
-
-## Deployment
-
-### Local (Development)
-
-```bash
-pip install -r requirements.txt
-python run.py
-```
-
-Server starts at **http://localhost:8000** with hot-reload disabled by default.  
-Enable reload for dev: `set KIRTI_RELOAD=1` (Windows) or `export KIRTI_RELOAD=1` (Linux/Mac) before running.
-
-### Local (Production)
-
-```bash
-pip install -r requirements.txt
-set KIRTI_WORKERS=1
-set KIRTI_PORT=8000
-python run.py
-```
-
-> **Note:** Workers must stay at 1 because the CV session is in-process (shared memory). Multiple workers = multiple isolated sessions = broken state.
-
-### Docker
-
-```bash
-# Build and run
-docker compose up --build
-
-# Or without compose
-docker build -t kirti .
-docker run -p 8000:8000 --device /dev/video0 kirti
-```
-
-> On Windows, Docker cannot pass through the webcam directly. Run natively on Windows or use WSL2 with USB passthrough.
-
-### Environment Variables
-
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `KIRTI_HOST` | `0.0.0.0` | Server bind address |
-| `KIRTI_PORT` | `8000` | Server port |
-| `KIRTI_WORKERS` | `1` | Uvicorn workers (keep at 1) |
-| `KIRTI_RELOAD` | `0` | Hot reload (`1` to enable) |
-| `KIRTI_CORS_ORIGINS` | `*` | Allowed origins (comma-separated) |
-
-Copy `.env.example` to `.env` to set these persistently.
-
-### Endpoints for Monitoring
-
-| Path | Purpose |
-|------|---------|
-| `GET /` | API info + version |
-| `GET /health` | Health check (returns `{"status": "ok"}`) |
-| `GET /docs` | Swagger UI |
+- Python 3.10+
+- See `requirements.txt` for packages
+- `pyzbar` requires the `zbar` shared library (bundled on Windows via pip)

@@ -25,13 +25,9 @@ env/
 Thumbs.db
 desktop.ini
 
-# Project-specific
-kirti.db
-*.log
-
 # Environment
 .env
 
-# Model file (auto-downloaded)
-engine/pose_landmarker_lite.task
-pose_landmarker_lite.task
+# Runtime uploads (images processed during a session)
+uploads/
+*.log

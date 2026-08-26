@@ -1,0 +1,6 @@
+# Place test images here:
+#   real_qr.jpg          — real card cropped to QR
+#   genuine_sample.jpg   — full genuine card
+#   tampered_sample.jpg  — deliberately edited card
+#   blurry_sample.jpg    — for quality-gate testing (Person 1)
+#   angled_sample.jpg    — for perspective-correction testing (Person 1)
