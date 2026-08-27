@@ -206,7 +206,7 @@ def test_verdict_suspicious_copymove():
 
 
 def test_verdict_qr_unreadable():
-    banner("TEST: compute_verdict — QR unreadable → TAMPERED")
+    banner("TEST: compute_verdict — QR unreadable → FORENSIC_ONLY (SUSPICIOUS / UNVERIFIED)")
     qr_result = {
         "signature_valid": False,
         "fields_cross_check": None,
@@ -220,7 +220,9 @@ def test_verdict_qr_unreadable():
     )
     print(json.dumps(verdict, indent=2))
 
-    assert verdict["status"] == "TAMPERED", f"FAIL: Expected TAMPERED, got {verdict['status']}"
+    assert verdict["status"] == "SUSPICIOUS", f"FAIL: Expected SUSPICIOUS, got {verdict['status']}"
+    assert verdict["confidence_tier"] == "FORENSIC_ONLY"
+    assert verdict["trust_score"] <= 70.0  # capped score
     assert verdict["details"]["qr_readable"] is False
     print("[PASS]")
 

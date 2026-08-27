@@ -79,14 +79,13 @@ def _decode_with_pyzbar(image: np.ndarray) -> Optional[str]:
     try:
         results = pyzbar_decode(image, symbols=[ZBarSymbol.QRCODE])
     except Exception as exc:
-        logger.warning("pyzbar decode raised: %s", exc)
+        logger.debug("pyzbar decode raised: %s", exc)
         return None
 
     if not results:
         return None
 
     _qr_library_used = "pyzbar"
-    # Return the raw data as a string (the Base-10 numeric payload).
     return results[0].data.decode("utf-8", errors="replace")
 
 
@@ -97,7 +96,7 @@ def _decode_with_opencv(image: np.ndarray) -> Optional[str]:
         detector = cv2.QRCodeDetector()
         data, points, _ = detector.detectAndDecode(image)
     except Exception as exc:
-        logger.warning("cv2.QRCodeDetector raised: %s", exc)
+        logger.debug("cv2.QRCodeDetector raised: %s", exc)
         return None
 
     if not data:
@@ -107,39 +106,158 @@ def _decode_with_opencv(image: np.ndarray) -> Optional[str]:
     return data
 
 
+def _try_single_image(img: np.ndarray) -> Optional[str]:
+    """Try all decoders on a single image variant."""
+    res = _decode_with_pyzbar(img)
+    if res is not None:
+        return res
+    return _decode_with_opencv(img)
+
+
+def _generate_qr_crops(gray: np.ndarray) -> list[np.ndarray]:
+    """Generate intelligent candidate crops where Aadhaar QR is typically found."""
+    h, w = gray.shape[:2]
+    crops = []
+
+    # Aadhaar QR is usually in bottom-right, bottom-left, or right-half
+    # Quadrant crops (with generous margins)
+    crops.append(gray[int(h * 0.3):, int(w * 0.4):])       # Bottom-right
+    crops.append(gray[int(h * 0.3):, :int(w * 0.6)])       # Bottom-left
+    crops.append(gray[:int(h * 0.7), int(w * 0.4):])       # Top-right
+    crops.append(gray[int(h * 0.2):int(h * 0.9), int(w * 0.3):int(w * 0.95)]) # Center-right
+
+    # Contour-based square detection for high-density QR boxes
+    try:
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        edges = cv2.Canny(blurred, 50, 150)
+        contours, _ = cv2.findContours(edges, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area > (h * w * 0.02) and area < (h * w * 0.6):  # reasonable QR size
+                x, y, cw, ch = cv2.boundingRect(cnt)
+                aspect = float(cw) / ch if ch > 0 else 0
+                if 0.75 <= aspect <= 1.35:  # roughly square
+                    pad = int(min(cw, ch) * 0.15)
+                    x1 = max(0, x - pad)
+                    y1 = max(0, y - pad)
+                    x2 = min(w, x + cw + pad)
+                    y2 = min(h, y + ch + pad)
+                    crops.append(gray[y1:y2, x1:x2])
+    except Exception:
+        pass
+
+    return [c for c in crops if c.size > 0 and c.shape[0] > 60 and c.shape[1] > 60]
+
+
 def decode_qr(image: np.ndarray) -> Optional[str]:
-    """Decode the Aadhaar Secure QR Code from an image.
+    """Decode the Aadhaar Secure QR Code from an image using multi-stage recovery.
 
-    Tries pyzbar first, falls back to OpenCV QRCodeDetector.
-    Returns the raw decoded payload string, or None on failure.
+    Aadhaar Secure QR codes are dense (version 15-20+) and standard phone scans
+    frequently fail without contrast enhancement, rescaling, or region extraction.
 
-    After calling this, check ``qr_library_used()`` to see which
-    library actually performed the decode.
+    Recovery stages:
+      1. Direct raw and grayscale scan
+      2. Multi-scale variations (0.5x, 0.75x, 1.5x, 2.0x Lanczos)
+      3. Image enhancements (CLAHE contrast, Sharpening, Adaptive Thresholding, Otsu)
+      4. Targeted region crops (Quadrants and detected square contours)
+      5. 90/180/270 degree rotations
+
+    Returns the raw decoded payload string, or None if all stages fail.
     """
-    if image is None:
-        logger.error("decode_qr received a None image")
+    if image is None or image.size == 0:
+        logger.error("decode_qr received a None or empty image")
         return None
 
-    # Try pyzbar first
-    result = _decode_with_pyzbar(image)
-    if result is not None:
-        return result
+    # --- Stage 1: Direct scan ---
+    res = _try_single_image(image)
+    if res is not None:
+        return res
 
-    # Fallback to OpenCV
-    result = _decode_with_opencv(image)
-    if result is not None:
-        return result
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
+    res = _try_single_image(gray)
+    if res is not None:
+        return res
 
-    logger.warning("No QR code found in image by either pyzbar or OpenCV")
+    # --- Stage 2: CLAHE Contrast Enhancement & Sharpening ---
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    enhanced_gray = clahe.apply(gray)
+    res = _try_single_image(enhanced_gray)
+    if res is not None:
+        return res
+
+    # Sharpening kernel
+    kernel_sharpen = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
+    sharpened = cv2.filter2D(enhanced_gray, -1, kernel_sharpen)
+    res = _try_single_image(sharpened)
+    if res is not None:
+        return res
+
+    # Adaptive Thresholding (Otsu & Gaussian)
+    _, otsu = cv2.threshold(enhanced_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    res = _try_single_image(otsu)
+    if res is not None:
+        return res
+
+    adapt_thresh = cv2.adaptiveThreshold(
+        enhanced_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 21, 5
+    )
+    res = _try_single_image(adapt_thresh)
+    if res is not None:
+        return res
+
+    # --- Stage 3: Rescaling Variants (Aadhaar QR needs 2x Lanczos for dense modules) ---
+    h, w = gray.shape[:2]
+    scales = [1.5, 2.0, 0.75, 0.5]
+    for s in scales:
+        resized = cv2.resize(gray, (int(w * s), int(h * s)), interpolation=cv2.INTER_LANCZOS4)
+        res = _try_single_image(resized)
+        if res is not None:
+            return res
+        # Also try sharpened on 2x
+        if s == 2.0:
+            res = _try_single_image(clahe.apply(resized))
+            if res is not None:
+                return res
+
+    # --- Stage 4: Targeted Region Crops (Sub-regions & Contours) ---
+    candidate_crops = _generate_qr_crops(gray)
+    for crop in candidate_crops:
+        # Try raw crop
+        res = _try_single_image(crop)
+        if res is not None:
+            return res
+        # Try 2x upscale on the crop
+        ch, cw = crop.shape[:2]
+        crop_2x = cv2.resize(crop, (cw * 2, ch * 2), interpolation=cv2.INTER_LANCZOS4)
+        res = _try_single_image(crop_2x)
+        if res is not None:
+            return res
+        # Try enhanced crop
+        crop_enh = clahe.apply(crop_2x)
+        res = _try_single_image(crop_enh)
+        if res is not None:
+            return res
+        _, crop_otsu = cv2.threshold(crop_enh, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        res = _try_single_image(crop_otsu)
+        if res is not None:
+            return res
+
+    # --- Stage 5: Rotations (for portrait / landscape photo orientations) ---
+    for rot in (cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_180, cv2.ROTATE_90_COUNTERCLOCKWISE):
+        rot_img = cv2.rotate(gray, rot)
+        res = _try_single_image(rot_img)
+        if res is not None:
+            return res
+        res = _try_single_image(clahe.apply(rot_img))
+        if res is not None:
+            return res
+
+    logger.warning("No QR code found in image after all 5 recovery stages.")
     return None
 
 
 def qr_library_used() -> Optional[str]:
-    """Return which library last successfully decoded a QR code.
-
-    Returns ``'pyzbar'``, ``'cv2.QRCodeDetector'``, or ``None`` if no
-    decode has succeeded yet.
-    """
+    """Return which library last successfully decoded a QR code."""
     return _qr_library_used
 
 

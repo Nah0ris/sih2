@@ -295,23 +295,31 @@ if uploaded_file:
 
     # ── Final Verdict ─────────────────────────────────────────────────
     st.subheader("Final Verdict")
-    verdict = results.get("verdict", {"status": "TAMPERED", "trust_score": 0.0, "details": {}})
+    verdict = results.get("verdict", {"status": "SUSPICIOUS", "trust_score": 0.0, "details": {}})
     color, bg, label = VERDICT_STYLE.get(verdict["status"], ("#333", "#eee", "UNKNOWN"))
-    trust = verdict["trust_score"]
+    trust = verdict.get("trust_score", 0.0)
+    tier = verdict.get("confidence_tier", "UNKNOWN")
+    summary = verdict.get("summary", "")
+
+    tier_badge = "🔐 TIER 1: CRYPTOGRAPHIC PROOF" if tier == "CRYPTOGRAPHIC" else "🔍 TIER 2/3: VISUAL FORENSICS ONLY"
 
     st.markdown(
         f"""
         <div style="background-color:{bg}; border:2px solid {color}; border-radius:10px;
                     padding:20px; text-align:center;">
-            <h2 style="color:{color}; margin:0;">{label}</h2>
-            <p style="font-size:18px; margin:8px 0 0 0;">Trust Score: <b>{trust:.0f}/100</b></p>
+            <span style="background-color:{color}; color:white; padding:4px 12px; border-radius:15px; font-size:12px; font-weight:bold; letter-spacing:1px;">
+                {tier_badge}
+            </span>
+            <h2 style="color:{color}; margin:10px 0 5px 0;">{label}</h2>
+            <p style="font-size:18px; margin:4px 0 8px 0;">Trust Score: <b>{trust:.0f}/100</b></p>
+            <p style="font-size:14px; color:#555; margin:0 auto; max-width:600px;">{summary}</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
     with st.expander("Full details (debug)"):
-        st.json(verdict["details"])
+        st.json(verdict.get("details", {}))
 
 else:
     st.info("Upload a JPG or PNG of an Aadhaar card to begin.")
