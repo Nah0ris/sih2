@@ -634,15 +634,13 @@ def cross_check_fields(qr_fields: dict, ocr_fields: dict) -> dict:
         match = False
 
         if key == "aadhaar_number":
-            # Extract digits only
             qr_digits = "".join(filter(str.isdigit, qr_val))
             ocr_digits = "".join(filter(str.isdigit, ocr_val))
-            # Aadhaar QR contains last 4 digits
             if qr_digits and ocr_digits:
-                match = (ocr_digits[-4:] == qr_digits[-4:])
-            elif not ocr_digits and qr_digits:
-                # OCR failed to read digits or masked with non-digits
-                match = True  # don't fail solely if OCR missed number
+                # Match if QR 4-digits is found in OCR 12-digits, or vice versa
+                match = (qr_digits in ocr_digits) or (ocr_digits[-4:] == qr_digits[-4:]) or (ocr_digits[:4] == qr_digits[:4])
+            elif not ocr_digits:
+                match = True  # OCR didn't catch number, don't fail verification
             else:
                 match = (qr_digits == ocr_digits)
 
@@ -669,14 +667,24 @@ def cross_check_fields(qr_fields: dict, ocr_fields: dict) -> dict:
             if not ocr_val:
                 match = True
             else:
-                match = (_clean_name(qr_val) == _clean_name(ocr_val))
+                cn_qr = _clean_name(qr_val)
+                cn_ocr = _clean_name(ocr_val)
+                match = (cn_qr == cn_ocr) or (cn_qr in cn_ocr) or (cn_ocr in cn_qr)
 
         elif key == "address":
-            # Front of Aadhaar card / downloaded slip often doesn't have address on front face
             if not ocr_val or not qr_val:
                 match = True
             else:
-                match = (_normalize_for_comparison(qr_val) == _normalize_for_comparison(ocr_val))
+                # Check pincode or significant keyword overlap
+                qr_pin = "".join(filter(str.isdigit, qr_val))
+                ocr_pin = "".join(filter(str.isdigit, ocr_val))
+                if qr_pin and ocr_pin and (qr_pin in ocr_pin or ocr_pin in qr_pin):
+                    match = True
+                else:
+                    qr_words = set(_normalize_for_comparison(qr_val).split())
+                    ocr_words = set(_normalize_for_comparison(ocr_val).split())
+                    overlap = qr_words.intersection(ocr_words)
+                    match = len(overlap) >= min(2, len(qr_words))
 
         if not match:
             all_match = False
