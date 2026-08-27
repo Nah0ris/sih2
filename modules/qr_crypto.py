@@ -89,6 +89,23 @@ def _decode_with_pyzbar(image: np.ndarray) -> Optional[str]:
     return results[0].data.decode("utf-8", errors="replace")
 
 
+_wechat_detector = None
+
+def _decode_with_wechat(image: np.ndarray) -> Optional[str]:
+    """Decode QR using OpenCV WeChat detector (state of the art for camera images)."""
+    global _qr_library_used, _wechat_detector
+    try:
+        if _wechat_detector is None:
+            _wechat_detector = cv2.wechat_qrcode_WeChatQRCode()
+        res, points = _wechat_detector.detectAndDecode(image)
+        if res and len(res) > 0 and len(res[0]) > 0:
+            _qr_library_used = "cv2.wechat_qrcode"
+            return res[0]
+    except Exception as exc:
+        logger.debug("WeChat QR detector error: %s", exc)
+    return None
+
+
 def _decode_with_opencv(image: np.ndarray) -> Optional[str]:
     """Fallback: decode QR using OpenCV's built-in QRCodeDetector."""
     global _qr_library_used
@@ -108,10 +125,68 @@ def _decode_with_opencv(image: np.ndarray) -> Optional[str]:
 
 def _try_single_image(img: np.ndarray) -> Optional[str]:
     """Try all decoders on a single image variant."""
+    # 1. Try WeChat QR (best on noisy phone photos)
+    res = _decode_with_wechat(img)
+    if res is not None:
+        return res
+    # 2. Try pyzbar
     res = _decode_with_pyzbar(img)
     if res is not None:
         return res
+    # 3. Try standard OpenCV
     return _decode_with_opencv(img)
+
+
+def diagnose_scan_issues(image: np.ndarray) -> dict:
+    """Analyze image properties and provide specific tips on why scanning might fail."""
+    if image is None or image.size == 0:
+        return {"tips": ["Image is empty or could not be loaded."]}
+
+    h, w = image.shape[:2]
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
+    
+    # 1. Blur calculation
+    blur_score = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+    
+    # 2. Glare calculation (pixels > 245)
+    glare_ratio = float(np.mean(gray > 245)) * 100
+    
+    # 3. Contrast calculation
+    contrast = float(np.std(gray))
+    
+    # 4. Brightness
+    brightness = float(np.mean(gray))
+
+    tips = []
+    
+    if blur_score < 60:
+        tips.append(f"Image is slightly blurry (sharpness: {blur_score:.0f}/100). Hold the phone steady and ensure the camera is in focus.")
+    
+    if glare_ratio > 3.0:
+        tips.append(f"Detected {glare_ratio:.1f}% glare/reflections. Plastic/laminated cards reflect overhead lights — tilt the card slightly away from direct light.")
+        
+    if contrast < 35:
+        tips.append(f"Low contrast ({contrast:.0f}). Increase ambient lighting so the QR pattern stands out sharply.")
+        
+    if brightness < 60:
+        tips.append("Image is too dark. Turn on a light or take the photo in a well-lit area.")
+    elif brightness > 220:
+        tips.append("Image is overexposed/washed out.")
+
+    if min(h, w) < 800:
+        tips.append(f"Image resolution is low ({w}x{h}). Aadhaar Secure QR codes contain dense data with thousands of tiny dots — get closer to the card.")
+        
+    if not tips:
+        tips.append("The QR code may be cropped, partially covered, or too small in the frame. Try taking a photo closer to the QR code.")
+
+    return {
+        "sharpness": round(blur_score, 1),
+        "glare_percentage": round(glare_ratio, 1),
+        "contrast": round(contrast, 1),
+        "brightness": round(brightness, 1),
+        "resolution": f"{w}x{h}",
+        "actionable_tips": tips,
+    }
 
 
 def _generate_qr_crops(gray: np.ndarray) -> list[np.ndarray]:

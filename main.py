@@ -29,6 +29,7 @@ from modules.qr_crypto import (
     extract_qr_fields,
     cross_check_fields,
     qr_library_used,
+    diagnose_scan_issues,
 )
 from modules.verdict import compute_verdict
 
@@ -168,6 +169,8 @@ def verify_document(image_path: str) -> dict:
         layout_result={"valid": layout_result.get("layout_match", True)},
     )
 
+    diagnostics = diagnose_scan_issues(image) if not qr_readable else {}
+
     return {
         "image_path": image_path,
         "quality_ok": quality_ok,
@@ -180,6 +183,7 @@ def verify_document(image_path: str) -> dict:
         "ela_score": ela_score,
         "copy_move_detected": copy_move_detected,
         "layout_match": layout_result.get("layout_match", True),
+        "diagnostics": diagnostics,
         "verdict": verdict,
     }
 

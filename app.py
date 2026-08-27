@@ -29,6 +29,7 @@ from modules.qr_crypto import (
     extract_qr_fields,
     cross_check_fields,
     qr_library_used,
+    diagnose_scan_issues,
 )
 from modules.verdict import compute_verdict
 
@@ -133,6 +134,7 @@ def run_pipeline(image_np: np.ndarray) -> dict:
         results["signature_valid"] = False
         results["qr_fields"] = {}
         results["field_cross_check"] = None
+        results["diagnostics"] = diagnose_scan_issues(image_np)
 
     # 5. ELA
     try:
@@ -264,7 +266,25 @@ if uploaded_file:
         st.caption(f"QR decoded using: {lib}")
     else:
         error_msg = results.get("qr_decode_error", "Unknown error")
-        st.error(f"QR not readable: {error_msg}")
+        st.warning(f"⚠️ QR code could not be detected: {error_msg}")
+        
+        diag = results.get("diagnostics", {})
+        if diag:
+            with st.expander("🔍 Image Quality Diagnostics & Retake Tips", expanded=True):
+                col_d1, col_d2, col_d3 = st.columns(3)
+                with col_d1:
+                    st.metric("Sharpness", f"{diag.get('sharpness', 0):.0f}/100", 
+                              help="Above 60 is recommended for dense Aadhaar QR codes")
+                with col_d2:
+                    st.metric("Glare Detected", f"{diag.get('glare_percentage', 0):.1f}%", 
+                              help="Under 3% is recommended. Avoid overhead lights on plastic cards.")
+                with col_d3:
+                    st.metric("Resolution", diag.get("resolution", "N/A"))
+                
+                st.markdown("**How to get a clean scan:**")
+                for tip in diag.get("actionable_tips", []):
+                    st.markdown(f"- {tip}")
+                st.info("💡 **Pro-Tip:** Aadhaar Secure QR codes contain thousands of microscopic modules. If the phone was too far away, take a closer photo or crop directly around the QR box.")
 
     # ── ELA ────────────────────────────────────────────────────────────
     st.subheader("Visual Forensics -- Error Level Analysis")
