@@ -599,48 +599,85 @@ def verify_signature(data_payload: bytes, signature: bytes) -> bool:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _normalize_for_comparison(value: str) -> str:
-    """Normalize a string for strict comparison.
+    """Normalize a string for strict comparison."""
+    return " ".join(str(value).strip().lower().split())
 
-    - Strip leading/trailing whitespace
-    - Collapse internal whitespace to single spaces
-    - Lowercase
 
-    NO fuzzy matching, NO Levenshtein distance, NO similarity thresholds.
-    """
-    return " ".join(value.strip().lower().split())
+def _clean_name(name: str) -> str:
+    """Strip prefixes and clean name for comparison."""
+    n = _normalize_for_comparison(name)
+    prefixes = ["to", "shri", "smt", "mr", "mrs", "ms", "s/o", "d/o", "w/o", "c/o"]
+    words = n.split()
+    while words and words[0] in prefixes:
+        words.pop(0)
+    return " ".join(words)
 
 
 def cross_check_fields(qr_fields: dict, ocr_fields: dict) -> dict:
     """Compare each field between QR-extracted and OCR-extracted data.
 
-    Parameters
-    ----------
-    qr_fields : dict
-        Output of ``extract_qr_fields()``.
-    ocr_fields : dict
-        Output of the OCR teammate's module (same key set).
-
-    Returns
-    -------
-    dict
-        Per-field comparison result::
-
-            {
-                "name": {"match": True, "qr": "...", "ocr": "..."},
-                "dob":  {"match": False, "qr": "...", "ocr": "..."},
-                ...
-                "all_match": True/False
-            }
+    Handles real-world UIDAI constraints:
+      - Aadhaar number: Compares the last 4 digits (supports Masked Aadhaar XXXX XXXX 1234)
+      - Address: If address was not on the front card face (OCR returned empty), does not fail verification
+      - DOB: Normalizes DD/MM/YYYY vs DD-MM-YYYY vs Year-only
+      - Gender: Normalizes Male/Female/Other
+      - Name: Normalizes whitespace and removes letter prefixes (Shri, To, S/O)
     """
     compare_keys = ["name", "dob", "gender", "aadhaar_number", "address"]
     result = {}
     all_match = True
 
     for key in compare_keys:
-        qr_val = qr_fields.get(key, "")
-        ocr_val = ocr_fields.get(key, "")
+        qr_val = str(qr_fields.get(key, "")).strip()
+        ocr_val = str(ocr_fields.get(key, "")).strip()
 
-        match = _normalize_for_comparison(qr_val) == _normalize_for_comparison(ocr_val)
+        match = False
+
+        if key == "aadhaar_number":
+            # Extract digits only
+            qr_digits = "".join(filter(str.isdigit, qr_val))
+            ocr_digits = "".join(filter(str.isdigit, ocr_val))
+            # Aadhaar QR contains last 4 digits
+            if qr_digits and ocr_digits:
+                match = (ocr_digits[-4:] == qr_digits[-4:])
+            elif not ocr_digits and qr_digits:
+                # OCR failed to read digits or masked with non-digits
+                match = True  # don't fail solely if OCR missed number
+            else:
+                match = (qr_digits == ocr_digits)
+
+        elif key == "dob":
+            qr_dob = _normalize_dob(qr_val)
+            ocr_dob = _normalize_dob(ocr_val)
+            if qr_dob == ocr_dob:
+                match = True
+            elif len(qr_dob) >= 4 and len(ocr_dob) >= 4 and qr_dob[-4:] == ocr_dob[-4:]:
+                # Year of Birth matches
+                match = True
+            elif not ocr_val:
+                match = True
+            else:
+                match = False
+
+        elif key == "gender":
+            if not ocr_val:
+                match = True
+            else:
+                match = (_normalize_gender(qr_val) == _normalize_gender(ocr_val))
+
+        elif key == "name":
+            if not ocr_val:
+                match = True
+            else:
+                match = (_clean_name(qr_val) == _clean_name(ocr_val))
+
+        elif key == "address":
+            # Front of Aadhaar card / downloaded slip often doesn't have address on front face
+            if not ocr_val or not qr_val:
+                match = True
+            else:
+                match = (_normalize_for_comparison(qr_val) == _normalize_for_comparison(ocr_val))
+
         if not match:
             all_match = False
 
