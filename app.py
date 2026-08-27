@@ -319,6 +319,9 @@ if uploaded_file:
         if layout_result.get("layout_match", True):
             st.success("Layout matches expected template")
         else:
+            flagged = layout_result.get("flagged_regions", [])
+            st.error(f"Layout mismatch detected in: {', '.join(flagged)}")
+
     # ── Photo Box Splicing & Face Forensics ─────────────────────────
     st.subheader("Photo & Face Splicing Forensics")
     photo_res = results.get("photo_tamper_result", {})
