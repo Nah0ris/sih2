@@ -22,7 +22,7 @@ from PIL import Image
 # ── Real module imports ───────────────────────────────────────────────────
 from modules.ocr import extract_fields as ocr_extract_fields
 from modules.ela import generate_ela_heatmap
-from modules.forensics import detect_copy_move, check_layout_consistency
+from modules.forensics import detect_copy_move, check_layout_consistency, detect_photo_tampering
 from modules.qr_crypto import (
     decode_qr,
     parse_secure_qr,
@@ -164,7 +164,15 @@ def run_pipeline(image_np: np.ndarray) -> dict:
         layout_result = {"layout_match": True, "flagged_regions": []}
     results["layout_result"] = layout_result
 
-    # 8. Final verdict
+    # 8. Photo tampering & splicing analysis
+    try:
+        photo_tamper_result = detect_photo_tampering(image_np)
+    except Exception as e:
+        logger.warning("Photo tampering check failed: %s", e)
+        photo_tamper_result = {"tampering_detected": False, "confidence_score": 0.0, "anomalies": []}
+    results["photo_tamper_result"] = photo_tamper_result
+
+    # 9. Final verdict
     qr_result = {
         "signature_valid": results["signature_valid"],
         "fields_cross_check": results["field_cross_check"],
@@ -177,6 +185,7 @@ def run_pipeline(image_np: np.ndarray) -> dict:
         ela_score=ela_score,
         copy_move_result={"detected": copy_move_detected},
         layout_result={"valid": layout_result.get("layout_match", True)},
+        photo_tamper_result=photo_tamper_result,
     )
     results["verdict"] = verdict
 
@@ -310,8 +319,15 @@ if uploaded_file:
         if layout_result.get("layout_match", True):
             st.success("Layout matches expected template")
         else:
-            flagged = layout_result.get("flagged_regions", [])
-            st.error(f"Layout mismatch detected in: {', '.join(flagged)}")
+    # ── Photo Box Splicing & Face Forensics ─────────────────────────
+    st.subheader("Photo & Face Splicing Forensics")
+    photo_res = results.get("photo_tamper_result", {})
+    if photo_res.get("tampering_detected"):
+        st.error(f"❌ Digital Photo Tampering Detected (Anomaly Score: {photo_res.get('confidence_score', 0):.0f}/100)")
+        for a in photo_res.get("anomalies", []):
+            st.markdown(f"- ⚠️ {a}")
+    else:
+        st.success("✅ No photo splicing or sensor noise anomalies detected in ID photo box")
 
     # ── Final Verdict ─────────────────────────────────────────────────
     st.subheader("Final Verdict")

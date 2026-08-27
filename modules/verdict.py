@@ -22,6 +22,7 @@ def compute_verdict(
     ela_score: float,
     copy_move_result: dict,
     layout_result: dict,
+    photo_tamper_result: dict = None,
 ) -> dict:
     """Combine all module outputs into a final verdict using a Tiered Confidence Model.
 
@@ -29,20 +30,8 @@ def compute_verdict(
       - Tier 1 (CRYPTOGRAPHIC): QR is readable, signature verified with UIDAI,
         fields cross-checked. High confidence (Trust score: 0-100).
       - Tier 2 / 3 (FORENSIC_ONLY): QR is unreadable or absent (damaged, glare/blurry photo).
-        Visual forensics only. Never overclaims 'GENUINE'; reports 'SUSPICIOUS'
-        if tampered, or 'SUSPICIOUS' (Unverified Clean) with capped score (max 65)
-        if visual checks pass clean.
-
-    Returns
-    -------
-    dict ::
-        {
-            "status": "GENUINE" | "SUSPICIOUS" | "TAMPERED",
-            "confidence_tier": "CRYPTOGRAPHIC" | "FORENSIC_ONLY",
-            "trust_score": float,   # 0-100
-            "summary": str,
-            "details": { ... }      # all sub-results for the UI
-        }
+        Visual forensics only. Never overclaims 'GENUINE'; detects photo tampering / copy-move / ELA,
+        and outputs 'TAMPERED' on detected visual splices, or 'SUSPICIOUS' (Unverified Clean) if clean.
     """
     # --- Unpack inputs ---
     sig_valid = qr_result.get("signature_valid", False)
@@ -53,6 +42,9 @@ def compute_verdict(
     ela_flagged = ela_score > ELA_THRESHOLD
     copy_move_detected = copy_move_result.get("detected", False)
     layout_valid = layout_result.get("valid", True)
+    
+    photo_tamper = photo_tamper_result or {}
+    photo_tampered = photo_tamper.get("tampering_detected", False)
 
     # --- Tier 1: Cryptographic Verification Available ---
     if not qr_unreadable:
@@ -70,7 +62,14 @@ def compute_verdict(
             trust_score = 15.0
             summary = "Field mismatch detected: Printed card text does not match cryptographically signed QR data."
 
-        # Signature valid + fields match
+        # Photo splice detected
+        elif photo_tampered:
+            status = "TAMPERED"
+            trust_score = 10.0
+            reasons = ", ".join(photo_tamper.get("anomalies", []))
+            summary = f"Photo tampering detected: {reasons or 'Splicing artifacts in ID photo box.'}"
+
+        # Signature valid + fields match + soft signals
         elif ela_flagged or copy_move_detected or not layout_valid:
             status = "SUSPICIOUS"
             trust_score = 60.0
@@ -95,16 +94,23 @@ def compute_verdict(
     else:
         confidence_tier = "FORENSIC_ONLY"
 
-        if copy_move_detected or ela_flagged:
+        if photo_tampered:
+            status = "TAMPERED"
+            trust_score = 12.0
+            reasons = ", ".join(photo_tamper.get("anomalies", []))
+            summary = f"Photo tampering detected: {reasons or 'Digital face swap / splicing artifacts identified in photo box.'}"
+
+        elif copy_move_detected or ela_flagged:
             status = "SUSPICIOUS"
             trust_score = 35.0
             summary = "QR unreadable + visual tampering detected (ELA or copy-move duplication flagged)."
+
         elif not layout_valid:
             status = "SUSPICIOUS"
             trust_score = 45.0
             summary = "QR unreadable + card layout does not match standard Aadhaar template."
+
         else:
-            # Visual forensics clean, but we cannot cryptographically prove genuine without QR
             status = "SUSPICIOUS"
             trust_score = 65.0
             summary = "No visual tampering detected, but cryptographic QR check was unavailable (photo quality/glare). Verification unconfirmed."
@@ -120,6 +126,7 @@ def compute_verdict(
         "ela_flagged": ela_flagged,
         "copy_move_detected": copy_move_detected,
         "layout_valid": layout_valid,
+        "photo_tampering": photo_tamper,
     }
     if qr_unreadable:
         details["qr_decode_error"] = qr_result.get("qr_decode_error", "unknown")

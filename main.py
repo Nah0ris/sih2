@@ -22,7 +22,7 @@ import numpy as np
 
 from modules.ocr import extract_fields as ocr_extract_fields
 from modules.ela import generate_ela_heatmap
-from modules.forensics import detect_copy_move, check_layout_consistency
+from modules.forensics import detect_copy_move, check_layout_consistency, detect_photo_tampering
 from modules.qr_crypto import (
     decode_qr,
     parse_secure_qr,
@@ -154,7 +154,15 @@ def verify_document(image_path: str) -> dict:
         logger.warning("Layout check failed: %s", e)
         layout_result = {"layout_match": True, "flagged_regions": []}
 
-    # 8. Verdict
+    # 8. Photo tampering analysis
+    try:
+        photo_tamper_result = detect_photo_tampering(image)
+        logger.info("Photo tampering: %s", photo_tamper_result)
+    except Exception as e:
+        logger.warning("Photo tampering check failed: %s", e)
+        photo_tamper_result = {"tampering_detected": False, "confidence_score": 0.0, "anomalies": []}
+
+    # 9. Verdict
     qr_result = {
         "signature_valid": sig_valid,
         "fields_cross_check": field_cross_check,
@@ -167,6 +175,7 @@ def verify_document(image_path: str) -> dict:
         ela_score=ela_score,
         copy_move_result={"detected": copy_move_detected},
         layout_result={"valid": layout_result.get("layout_match", True)},
+        photo_tamper_result=photo_tamper_result,
     )
 
     diagnostics = diagnose_scan_issues(image) if not qr_readable else {}
@@ -183,6 +192,7 @@ def verify_document(image_path: str) -> dict:
         "ela_score": ela_score,
         "copy_move_detected": copy_move_detected,
         "layout_match": layout_result.get("layout_match", True),
+        "photo_tampering": photo_tamper_result,
         "diagnostics": diagnostics,
         "verdict": verdict,
     }
