@@ -282,8 +282,9 @@ if uploaded_file:
             with st.expander("🔍 Image Quality Diagnostics & Retake Tips", expanded=True):
                 col_d1, col_d2, col_d3 = st.columns(3)
                 with col_d1:
-                    st.metric("Sharpness", f"{diag.get('sharpness', 0):.0f}/100", 
-                              help="Above 60 is recommended for dense Aadhaar QR codes")
+                    sharp_val = diag.get('sharpness', 0)
+                    st.metric("Sharpness", f"{sharp_val:.0f}%", 
+                              help="Above 60% indicates a sharp image. Below 50% indicates blur.")
                 with col_d2:
                     st.metric("Glare Detected", f"{diag.get('glare_percentage', 0):.1f}%", 
                               help="Under 3% is recommended. Avoid overhead lights on plastic cards.")

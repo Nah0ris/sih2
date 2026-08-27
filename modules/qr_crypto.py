@@ -145,8 +145,9 @@ def diagnose_scan_issues(image: np.ndarray) -> dict:
     h, w = image.shape[:2]
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
     
-    # 1. Blur calculation
-    blur_score = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+    # 1. Blur calculation (Laplacian variance normalized to 0-100%)
+    raw_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+    sharpness_pct = min(100.0, max(0.0, (raw_var / 250.0) * 100.0))
     
     # 2. Glare calculation (pixels > 245)
     glare_ratio = float(np.mean(gray > 245)) * 100
@@ -159,8 +160,8 @@ def diagnose_scan_issues(image: np.ndarray) -> dict:
 
     tips = []
     
-    if blur_score < 60:
-        tips.append(f"Image is slightly blurry (sharpness: {blur_score:.0f}/100). Hold the phone steady and ensure the camera is in focus.")
+    if raw_var < 50.0:
+        tips.append(f"Image is blurry (sharpness: {sharpness_pct:.0f}%). Hold the phone steady and ensure the camera is in focus.")
     
     if glare_ratio > 3.0:
         tips.append(f"Detected {glare_ratio:.1f}% glare/reflections. Plastic/laminated cards reflect overhead lights — tilt the card slightly away from direct light.")
@@ -180,7 +181,8 @@ def diagnose_scan_issues(image: np.ndarray) -> dict:
         tips.append("The QR code may be cropped, partially covered, or too small in the frame. Try taking a photo closer to the QR code.")
 
     return {
-        "sharpness": round(blur_score, 1),
+        "sharpness": round(sharpness_pct, 1),
+        "raw_variance": round(raw_var, 1),
         "glare_percentage": round(glare_ratio, 1),
         "contrast": round(contrast, 1),
         "brightness": round(brightness, 1),
